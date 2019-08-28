@@ -45,6 +45,30 @@
   :type 'integer
   :group 'tmux-pane)
 
+(defcustom ensure-run-on-current-pane t
+  "When `t` ensure that the command is running on current pane.
+This means that when running emacsclient on multiple tmux sessions tmux commands
+will not always run in the original session (i.e: tmux session that started emacsclient)."
+  :type 'boolean
+  :group 'tmux-pane)
+
+(defun pick-pane (&optional fallback-pane)
+  (let ((current-pane (and ensure-run-on-current-pane
+                           (s-chop-prefix "TMUX_PANE="
+                                          (car (seq-filter
+                                                (lambda (env)
+                                                  (s-starts-with? "TMUX_PANE=" env))
+                                                (cdr (assq 'environment
+                                                           (frame-parameters (selected-frame))))))))))
+    (if current-pane
+        current-pane
+      fallback-pane)))
+
+(defun format-with-right-pane (cmd &rest args)
+  (if-let ((current-pane (pick-pane)))
+      (apply #'format (s-concat cmd " -t %s") (append args (list current-pane)))
+    cmd))
+
 :autoload
 (defun -windmove(dir tmux-cmd)
   (interactive)
@@ -55,12 +79,12 @@
 :autoload
 (defun open-vertical ()
   (interactive)
-  (shell-command (format "tmux split-window -h -p %s" vertical-percent)))
+  (shell-command (format-with-right-pane "tmux split-window -h -p %s" vertical-percent)))
 
 :autoload
 (defun open-horizontal ()
   (interactive)
-  (shell-command (format "tmux split-window -v -p %s" horizontal-percent)))
+  (shell-command (format-with-right-pane "tmux split-window -v -p %s" horizontal-percent)))
 
 :autoload
 (defun close ()
@@ -78,7 +102,7 @@
   (interactive)
   ;; have more than one pane
   (if (< 1 (length
-            (s-lines (s-trim (shell-command-to-string "tmux list-panes")))))
+            (s-lines (s-trim (shell-command-to-string (format-with-right-pane "tmux list-panes"))))))
       (close)
     (open-vertical)))
 
@@ -87,7 +111,7 @@
   (interactive)
   ;; have more than one pane
   (if (< 1 (length
-            (s-lines (s-trim (shell-command-to-string "tmux list-panes")))))
+            (s-lines (s-trim (shell-command-to-string (format-with-right-pane "tmux list-panes"))))))
       (close)
     (open-horizontal)))
 
@@ -97,13 +121,13 @@
 (defvar tmux-pane-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-k")
-      (lambda () (interactive) (tmux-pane--windmove "up"  "tmux select-pane -U")))
+      (lambda () (interactive) (tmux-pane--windmove "up"  (tmux-pane-format-with-right-pane "tmux select-pane -U"))))
     (define-key map (kbd "C-j")
-      (lambda () (interactive) (tmux-pane--windmove "down"  "tmux select-pane -D")))
+      (lambda () (interactive) (tmux-pane--windmove "down"  (tmux-pane-format-with-right-pane "tmux select-pane -D"))))
     (define-key map (kbd "C-h")
-      (lambda () (interactive) (tmux-pane--windmove "left" "tmux select-pane -L")))
+      (lambda () (interactive) (tmux-pane--windmove "left" (tmux-pane-format-with-right-pane "tmux select-pane -L"))))
     (define-key map (kbd "C-l")
-      (lambda () (interactive) (tmux-pane--windmove "right" "tmux select-pane -R")))
+      (lambda () (interactive) (tmux-pane--windmove "right" (tmux-pane-format-with-right-pane "tmux select-pane -R"))))
     map))
 
 (define-minor-mode tmux-pane-mode
