@@ -27,6 +27,7 @@
 
 ;;; Code:
 (require 's)
+(require 'dash)
 
 ;; `define-namespace' is autoloaded, so there's no need to require
 ;; `names'. However, requiring it here means it will also work for
@@ -53,16 +54,16 @@ will not always run in the original session (i.e: tmux session that started emac
   :group 'tmux-pane)
 
 (defun pick-pane (&optional fallback-pane)
-  (let ((current-pane (and ensure-run-on-current-pane
-                           (s-chop-prefix "TMUX_PANE="
-                                          (car (seq-filter
-                                                (lambda (env)
-                                                  (s-starts-with? "TMUX_PANE=" env))
-                                                (cdr (assq 'environment
-                                                           (frame-parameters (selected-frame))))))))))
-    (if current-pane
-        current-pane
-      fallback-pane)))
+  (if-let ((current-pane (and ensure-run-on-current-pane
+                              (->> (selected-frame)
+                                   frame-parameters
+                                   (assq 'environment)
+                                   cdr
+                                   (--filter (s-starts-with? "TMUX_PANE=" it))
+                                   car
+                                   (s-chop-prefix "TMUX_PANE=")))))
+      current-pane
+    fallback-pane))
 
 (defun format-with-right-pane (cmd &rest args)
   (if-let ((current-pane (pick-pane)))
