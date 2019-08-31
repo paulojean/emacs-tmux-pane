@@ -5,7 +5,7 @@
 ;; URL: https://github.com/laishulu/emacs-tmux-pane
 ;; Created: November 1, 2018
 ;; Keywords: convenience, terminals, tmux, window, pane, navigation, integration
-;; Package-Requires: ((names "0.5") (emacs "24") (s "0"))
+;; Package-Requires: ((names "0.5") (emacs "24") (s "0") (dash "0"))
 ;; Version: 0.1
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -53,7 +53,7 @@ will not always run in the original session (i.e: tmux session that started emac
   :type 'boolean
   :group 'tmux-pane)
 
-(defun pick-pane (&optional fallback-pane)
+(defun format-with-right-pane (cmd &rest args)
   (if-let ((current-pane (and ensure-run-on-current-pane
                               (->> (selected-frame)
                                    frame-parameters
@@ -62,13 +62,25 @@ will not always run in the original session (i.e: tmux session that started emac
                                    (--filter (s-starts-with? "TMUX_PANE=" it))
                                    car
                                    (s-chop-prefix "TMUX_PANE=")))))
-      current-pane
-    fallback-pane))
-
-(defun format-with-right-pane (cmd &rest args)
-  (if-let ((current-pane (pick-pane)))
       (apply #'format (s-concat cmd " -t %s") (append args (list current-pane)))
     cmd))
+
+(defun get-inactive-pane ()
+  (when-let* ((inactive-panes (->> (format-with-right-pane "tmux list-panes -F \"#{pane_id}:#{pane_active}\"")
+                                   shell-command-to-string
+                                   s-trim
+                                   s-lines
+                                   (--filter (s-ends-with? ":0" it))
+                                   (--map (s-chop-suffix ":0" it)))))
+    (and (= 1 (length inactive-panes))
+         (car inactive-panes))))
+
+(defun number-of-panes-in-window ()
+  (->> (format-with-right-pane "tmux list-panes")
+       shell-command-to-string
+       s-trim
+       s-lines
+       length))
 
 :autoload
 (defun -windmove(dir tmux-cmd)
@@ -90,31 +102,40 @@ will not always run in the original session (i.e: tmux session that started emac
 :autoload
 (defun close ()
   (interactive)
-  (shell-command "tmux kill-pane -t {last}"))
+  (if-let ((terminal-pane (get-inactive-pane)))
+      (shell-command (format "tmux kill-pane -t %s" terminal-pane))
+    (message "Can `close` only when there are exactly two panes in the current window")))
 
 :autoload
 (defun rerun ()
   (interactive)
-  (shell-command "tmux send-keys -t {last} C-c")
-  (shell-command "tmux send-keys -t {last} Up Enter"))
+  (if-let ((terminal-pane (get-inactive-pane)))
+      (progn
+        (shell-command (format "tmux send-keys -t %s C-c" terminal-pane))
+        (shell-command (format "tmux send-keys -t %s !! Enter" terminal-pane)))
+    (message "Can `rerun` only when there's exactly two panes in the current window")))
 
 :autoload
 (defun toggle-vertical()
   (interactive)
-  ;; have more than one pane
-  (if (< 1 (length
-            (s-lines (s-trim (shell-command-to-string (format-with-right-pane "tmux list-panes"))))))
+  (let ((number-of-panes (number-of-panes-in-window)))
+    (cond
+     ((< 2 number-of-panes) (message "Can `toggle` only when there's at most 2 panes in the current window"))
+     ((= 1 number-of-panes) (open-vertical))
+     (t
       (close)
-    (open-vertical)))
+      (open-vertical)))))
 
 :autoload
 (defun toggle-horizontal()
   (interactive)
-  ;; have more than one pane
-  (if (< 1 (length
-            (s-lines (s-trim (shell-command-to-string (format-with-right-pane "tmux list-panes"))))))
+  (let ((number-of-panes (number-of-panes-in-window)))
+    (cond
+     ((< 2 number-of-panes) (message "Can `toggle-` only when there's at most two panes in the current window"))
+     ((= 1 number-of-panes) (open-horizontal))
+     (t
       (close)
-    (open-horizontal)))
+      (open-horizontal)))))
 
 ;; end of namespace
 )
