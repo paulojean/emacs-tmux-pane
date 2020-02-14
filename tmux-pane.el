@@ -53,27 +53,34 @@ will not always run in the original session (i.e: tmux session that started emac
   :type 'boolean
   :group 'tmux-pane)
 
+(defcustom terminal-folder-fn nil
+  "`fn` to choose terminal's folder when oppening a new one."
+  :type 'function
+  :group 'tmux-pane)
+
+(defun current-emacs-pane ()
+  (->> (selected-frame)
+       frame-parameters
+       (assq 'environment)
+       cdr
+       (--filter (s-starts-with? "TMUX_PANE=" it))
+       car
+       (s-chop-prefix "TMUX_PANE=")))
+
 (defun format-with-right-pane (cmd &rest args)
   (if-let ((current-pane (and ensure-run-on-current-pane
-                              (->> (selected-frame)
-                                   frame-parameters
-                                   (assq 'environment)
-                                   cdr
-                                   (--filter (s-starts-with? "TMUX_PANE=" it))
-                                   car
-                                   (s-chop-prefix "TMUX_PANE=")))))
+                              (current-emacs-pane))))
       (apply #'format (s-concat cmd " -t %s") (append args (list current-pane)))
     cmd))
 
-(defun get-inactive-pane ()
-  (when-let* ((inactive-panes (->> (format-with-right-pane "tmux list-panes -F \"#{pane_id}:#{pane_active}\"")
-                                   shell-command-to-string
-                                   s-trim
-                                   s-lines
-                                   (--filter (s-ends-with? ":0" it))
-                                   (--map (s-chop-suffix ":0" it)))))
-    (and (= 1 (length inactive-panes))
-         (car inactive-panes))))
+(defun get-terminal-pane ()
+  (when-let* ((non-emacs-panes (->> (format-with-right-pane "tmux list-panes -F \"#{pane_id}\"")
+                                    shell-command-to-string
+                                    s-trim
+                                    s-lines
+                                    (--filter (not (s-equals? (current-emacs-pane) it))))))
+    (and (= 1 (length non-emacs-panes))
+         (car non-emacs-panes))))
 
 (defun number-of-panes-in-window ()
   (->> (format-with-right-pane "tmux list-panes")
@@ -92,24 +99,32 @@ will not always run in the original session (i.e: tmux session that started emac
 :autoload
 (defun open-vertical ()
   (interactive)
-  (shell-command (format-with-right-pane "tmux split-window -h -p %s" vertical-percent)))
+  (shell-command (format-with-right-pane "tmux split-window -h -p %s" vertical-percent))
+  (-some-> terminal-folder-fn
+           (apply nil)
+           (->> (format "tmux send-keys -t %s \"cd %s\" Enter" (get-terminal-pane)))
+           shell-command))
 
 :autoload
 (defun open-horizontal ()
   (interactive)
-  (shell-command (format-with-right-pane "tmux split-window -v -p %s" horizontal-percent)))
+  (shell-command (format-with-right-pane "tmux split-window -v -p %s" horizontal-percent))
+  (-some-> terminal-folder-fn
+           (apply nil)
+           (->> (format "tmux send-keys -t %s \"cd %s\" Enter" (get-terminal-pane)))
+           shell-command))
 
 :autoload
 (defun close ()
   (interactive)
-  (if-let ((terminal-pane (get-inactive-pane)))
+  (if-let ((terminal-pane (get-terminal-pane)))
       (shell-command (format "tmux kill-pane -t %s" terminal-pane))
     (message "Can `close` only when there are exactly two panes in the current window")))
 
 :autoload
 (defun rerun ()
   (interactive)
-  (if-let ((terminal-pane (get-inactive-pane)))
+  (if-let ((terminal-pane (get-terminal-pane)))
       (progn
         (shell-command (format "tmux send-keys -t %s C-c" terminal-pane))
         (shell-command (format "tmux send-keys -t %s !! Enter" terminal-pane)))
